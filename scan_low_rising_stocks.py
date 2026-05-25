@@ -2,7 +2,7 @@
 """
 A股低位连涨个股扫描脚本
 
-逻辑参考 get_potential_sectors.py：
+逻辑参考 scan_low_sectors.py：
 - 低位：当前收盘价低于最近 N 日均价，默认 60 日
 - 连涨：最近 M 个交易日涨跌幅均为正，默认 3 日
 
@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - requests 是可选 fallback
     requests = None
 
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_scan_data.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_data.db")
 DATA_RETENTION_DAYS = 420
 REQUEST_SLEEP_SECONDS = 0.15
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/122.0 Safari/537.36"
@@ -370,7 +370,7 @@ def should_refresh_history_cache(cached_df: Optional[pd.DataFrame], target_date:
     return False
 
 
-def cache_stock_history(df: pd.DataFrame, code: str, is_complete: int) -> None:
+def cache_stock_history(df: pd.DataFrame, code: str, is_complete: int, end_date: str = "") -> None:
     if df.empty:
         return
 
@@ -378,6 +378,9 @@ def cache_stock_history(df: pd.DataFrame, code: str, is_complete: int) -> None:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         for _, row in df.iterrows():
+            row_date = row.get("日期", "")
+            # 只有 end_date 当天才可能未收盘，历史数据一定是完整的
+            row_complete = is_complete if row_date == end_date else 1
             cursor.execute("""
                 INSERT OR REPLACE INTO stock_history
                 (code, trade_date, open_price, high_price, low_price, close_price, volume, amount,
@@ -385,7 +388,7 @@ def cache_stock_history(df: pd.DataFrame, code: str, is_complete: int) -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 code,
-                row.get("日期", ""),
+                row_date,
                 row.get("开盘价", 0),
                 row.get("最高价", 0),
                 row.get("最低价", 0),
@@ -394,7 +397,7 @@ def cache_stock_history(df: pd.DataFrame, code: str, is_complete: int) -> None:
                 row.get("成交额", 0),
                 row.get("涨跌幅", 0),
                 row.get("数据来源", "unknown"),
-                is_complete,
+                row_complete,
                 today,
             ))
 
@@ -481,7 +484,7 @@ def get_stock_history(
         try:
             df = fetcher()
             if not df.empty:
-                cache_stock_history(df, code, is_complete)
+                cache_stock_history(df, code, is_complete, end_date)
                 if _stats is not None:
                     _stats["network"] = _stats.get("network", 0) + 1
                 return df
