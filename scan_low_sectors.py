@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
 """
-A股潜力板块筛选脚本
-功能：获取每天收盘后A股市场的潜力板块（低位、连涨3天）
+A股低位板块筛选脚本
+功能：获取每天收盘后A股市场的低位板块（低位、连涨3天）
 数据源：akshare（同花顺）
 缓存：SQLite数据库
+
+命令行参数：
+    --include-intraday   交易时间内也纳入当天未收盘数据（默认不纳入）
+    --force-refresh      忽略缓存，强制重新抓取板块及历史行情
+    --no-cache-result    不复用当天已有的完整筛选结果，重新筛选
+
+使用示例：
+    python scan_low_sectors.py
+        非交易时间使用最近完整交易日数据；交易时间默认跳过当天未收盘数据。
+
+    python scan_low_sectors.py --include-intraday
+        交易时间内纳入当天未收盘数据（数据库标记为不完整）。
+
+    python scan_low_sectors.py --force-refresh
+        忽略所有缓存，重新从网络抓取数据并筛选。
+
+    python scan_low_sectors.py --no-cache-result
+        即使当天已有完整筛选结果，也重新执行筛选。
 """
 
+import argparse
 import akshare as ak
 import pandas as pd
 import sqlite3
@@ -188,29 +207,6 @@ def get_cached_screening_results(date: str, is_complete: int = 1) -> Optional[Tu
     industry_df = df[df["sector_type"] == "行业"]
     concept_df = df[df["sector_type"] == "概念"]
     return format_records(industry_df), format_records(concept_df)
-
-
-def get_user_choice_for_incomplete_data() -> bool:
-    """让用户选择是否包含当天未收盘数据"""
-    print("\n" + "="*60)
-    print("⚠️  当前处于交易时间内")
-    print("="*60)
-    print("当天数据尚未收盘，可能不完整。")
-    print("请选择：")
-    print("  1. 包含当天未收盘数据（后续可覆盖更新）")
-    print("  2. 跳过今天，只使用已收盘的历史数据")
-    print("="*60)
-    
-    while True:
-        choice = input("请输入选项 (1 或 2): ").strip()
-        if choice == "1":
-            print("✓ 已选择包含当天未收盘数据")
-            return True
-        elif choice == "2":
-            print("✓ 已选择跳过今天的数据")
-            return False
-        else:
-            print("无效输入，请输入 1 或 2")
 
 
 def init_database():
@@ -628,7 +624,7 @@ def filter_potential_sectors(sector_type: str = "industry",
                            is_complete: int = 1,
                            target_date: Optional[str] = None) -> List[Dict]:
     """
-    筛选潜力板块
+    筛选低位板块
     target_date: 数据截止的目标交易日
     """
     print(f"\n开始筛选{('行业' if sector_type == 'industry' else '概念')}板块...")
@@ -753,18 +749,18 @@ def output_results(industry_sectors: List[Dict], concept_sectors: List[Dict], is
     all_sectors = industry_sectors + concept_sectors
     
     if not all_sectors:
-        print("\n未找到符合条件的潜力板块")
+        print("\n未找到符合条件的低位板块")
         return
     
     # 按连涨天数和偏离度排序
     all_sectors.sort(key=lambda x: (-x["连涨天数"], x["偏离度"]))
     
     print("\n" + "="*100)
-    print("A股潜力板块筛选结果（低位、连涨3天）")
+    print("A股低位板块筛选结果（低位、连涨3天）")
     print("="*100)
     print(f"筛选时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"数据完整性: {'完整' if is_complete == 1 else '⚠️ 含未收盘数据'}")
-    print(f"共找到 {len(all_sectors)} 个潜力板块")
+    print(f"共找到 {len(all_sectors)} 个低位板块")
     print(f"  - 行业板块: {len(industry_sectors)} 个")
     print(f"  - 概念板块: {len(concept_sectors)} 个")
     print("="*100)
@@ -775,7 +771,7 @@ def output_results(industry_sectors: List[Dict], concept_sectors: List[Dict], is
         if not type_sectors:
             continue
         
-        print(f"\n【{sector_type}板块】潜力板块:")
+        print(f"\n【{sector_type}板块】低位板块:")
         print("-"*130)
         print(f"{'板块名称':<12} {'板块代码(来源)':<16} {'连涨':<6} {'当前价格':<10} {'均价':<10} {'偏离度':<8} {'涨幅':<8} {'量比':<8} {'换手比':<8} {'量放大':<6} {'换放大':<6} {'领涨股':<10}")
         print("-"*130)
@@ -828,9 +824,18 @@ def output_results(industry_sectors: List[Dict], concept_sectors: List[Dict], is
         print(f"  {i}. {sector['板块名称']} ({sector['板块类型']}): 连涨{sector['连涨天数']}天, 偏离度{sector['偏离度']}%, 量比{sector['成交量比值']}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="筛选A股低位连涨板块")
+    parser.add_argument("--include-intraday", action="store_true", help="交易时间内也纳入当天未收盘数据")
+    parser.add_argument("--force-refresh", action="store_true", help="忽略缓存，强制重新抓取")
+    parser.add_argument("--no-cache-result", action="store_true", help="不复用当天完整筛选结果")
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
-    print("A股潜力板块筛选脚本")
+    args = parse_args()
+    print("A股低位板块筛选脚本")
     print("筛选条件：低位（当前价格低于60日均价）、连涨3天")
     print("="*100)
 
@@ -843,26 +848,23 @@ def main():
     target_date = get_latest_trade_date(trade_calendar)
     today = datetime.now().strftime("%Y%m%d")
 
+    is_complete = 1
     # 如果今天不是交易日，直接跳过抓取实时数据
     if not is_trade_date(today, trade_calendar):
         print(f"\n✓ 今天 ({today}) 非交易日，使用最近交易日 {target_date} 的数据")
-        is_complete = 1
     elif is_trading_time(trade_calendar):
         print(f"\n⚠️  当前处于交易时间内（9:30-11:30 或 13:00-15:00）")
         print("当天数据尚未收盘，可能不完整。")
-        include_today = get_user_choice_for_incomplete_data()
-        if include_today:
+        if args.include_intraday:
             is_complete = 0
             target_date = today
-            print("✓ 将包含当天未收盘数据（数据库会标记为不完整）")
+            print("✓ 已选择包含当天未收盘数据（数据库会标记为不完整）")
         else:
-            is_complete = 1
-            print(f"✓ 将跳过今天的数据，使用最近完整交易日 {target_date} 的数据")
+            print(f"✓ 未指定 --include-intraday，使用最近完整交易日 {target_date} 的数据")
     else:
-        print(f"\n✓ 当前非交易时间，使用最近完整交易日 {target_date} 的数据")
-        is_complete = 1
+        print(f"\n✓ 当前非交易时间,使用最近完整交易日 {target_date} 的数据")
 
-    if is_complete == 1:
+    if is_complete == 1 and not args.force_refresh and not args.no_cache_result:
         cached_results = get_cached_screening_results(target_date, is_complete=1)
         if cached_results is not None:
             industry_sectors, concept_sectors = cached_results
