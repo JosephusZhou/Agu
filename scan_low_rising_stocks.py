@@ -528,17 +528,27 @@ def check_low_position(df: pd.DataFrame, lookback_days: int = 60) -> Tuple[bool,
     return current_price < avg_price, float(current_price), float(avg_price)
 
 
-def check_metric_amplified(df: pd.DataFrame, column: str, days: int = 5, threshold: float = 1.5) -> Tuple[bool, float]:
-    """检查成交量/成交额是否较近N日均值放大。"""
-    if df is None or len(df) < days + 1 or column not in df.columns:
+def check_metric_amplified(
+    df: pd.DataFrame,
+    column: str,
+    streak_days: int = 3,
+    baseline_days: int = 5,
+    threshold: float = 1.5,
+) -> Tuple[bool, float]:
+    """检查成交量/成交额是否较连涨区间前N日均值放大。"""
+    if df is None or column not in df.columns or streak_days < 1 or baseline_days < 1:
         return False, 0
 
-    recent_avg = df.iloc[-(days + 1):-1][column].mean()
+    required_rows = streak_days + baseline_days
+    if len(df) < required_rows:
+        return False, 0
+
+    baseline_avg = df.iloc[-required_rows:-streak_days][column].mean()
     current_value = df.iloc[-1][column]
-    if not recent_avg or pd.isna(recent_avg) or pd.isna(current_value):
+    if not baseline_avg or pd.isna(baseline_avg) or pd.isna(current_value):
         return False, 0
 
-    ratio = float(current_value) / float(recent_avg)
+    ratio = float(current_value) / float(baseline_avg)
     return ratio >= threshold, round(ratio, 2)
 
 
@@ -627,8 +637,8 @@ def _analyze_single_stock(
         return None
 
     deviation = (current_price - avg_price) / avg_price * 100
-    is_volume_amp, volume_ratio = check_metric_amplified(history_df, "成交量")
-    is_amount_amp, amount_ratio = check_metric_amplified(history_df, "成交额")
+    is_volume_amp, volume_ratio = check_metric_amplified(history_df, "成交量", streak_days=consecutive_days)
+    is_amount_amp, amount_ratio = check_metric_amplified(history_df, "成交额", streak_days=consecutive_days)
     today_change = history_df.iloc[-1].get("涨跌幅", 0)
     data_source = history_df.iloc[-1].get("数据来源", "unknown")
 
